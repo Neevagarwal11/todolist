@@ -38,12 +38,14 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log("MongoDB Connected"))
   .catch(err => console.error(err));
 
-const UserSchema = new mongoose.Schema({
-  username: String,
-  password: String,
-  events: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Event' }]
-});
+  const UserSchema = new mongoose.Schema({
+    username: String,
+    password: String,
+    events: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Event' }],
+    cart: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Event' }] // Add this line
+  });
 
+  
 const EventSchema = new mongoose.Schema({
   name: String,
   date: String,
@@ -132,5 +134,92 @@ app.post("/api/buy-ticket", async (req, res) => {
     res.json({ message: "Ticket purchased successfully", event });
   });
 });
+
+// User Logout Route
+app.get("/api/logout", (req, res) => {
+  res.clearCookie('token');
+  res.json({ message: "User logged out" });
+});
+
+// Add Event to Cart Route
+app.post("/api/cart/add", async (req, res) => {
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+  jwt.verify(token, secretKey, async (err, decoded) => {
+    if (err) return res.status(403).json({ error: "Invalid token" });
+
+    const { eventId } = req.body;
+    const event = await Event.findById(eventId);
+    if (!event) return res.status(404).json({ error: "Event not found" });
+
+    const user = await User.findById(decoded.userId);
+    if (!user.cart) user.cart = [];
+
+    // Check if the event is already in the cart
+    if (user.cart.some(event => event.toString() === eventId)) {
+      return res.status(400).json({ error: "Event already in cart" });
+    }
+
+    user.cart.push(event);
+    await user.save();
+
+    res.json({ message: "Event added to cart", cart: user.cart });
+  });
+});
+
+
+
+// View Cart Route
+app.get("/api/cart", async (req, res) => {
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+  jwt.verify(token, secretKey, async (err, decoded) => {
+    if (err) return res.status(403).json({ error: "Invalid token" });
+
+    const user = await User.findById(decoded.userId).populate('cart');
+    const cart = user.cart;
+
+    // Calculate the number of distinct events and the count of each event
+    const eventCounts = cart.reduce((acc, event) => {
+      const eventId = event._id.toString();
+      if (!acc[eventId]) {
+        acc[eventId] = { event, count: 0 };
+      }
+      acc[eventId].count++;
+      return acc;
+    }, {});
+
+    const distinctEvents = Object.values(eventCounts);
+    console.log(distinctEvents);
+    res.json({
+      cart: distinctEvents,
+      totalDistinctEvents: distinctEvents.length,
+      eventCounts: distinctEvents.map(({ event, count }) => ({ event, count }))
+    });
+  });
+});
+
+// Remove Event from Cart Route
+app.post("/api/cart/remove", async (req, res) => {
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+  jwt.verify(token, secretKey, async (err, decoded) => {
+    if (err) return res.status(403).json({ error: "Invalid token" });
+
+    const { eventId } = req.body;
+    const user = await User.findById(decoded.userId);
+    user.cart = user.cart.filter(event => event.toString() !== eventId);
+    await user.save();
+
+    res.json({ message: "Event removed from cart", cart: user.cart });
+  });
+});
+
+
+
+
 
 app.listen(5000, () => console.log("Server running on port 5000"));
